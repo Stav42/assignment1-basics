@@ -161,3 +161,9 @@ cython_debug/
 
 .ruff_cache/
 *.zip
+
+# Datasets
+TinyStories-train.txt
+TinyStories-valid.txt
+OpenWebText-train.txt
+OpenWebText-valid.txt

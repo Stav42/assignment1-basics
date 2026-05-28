@@ -78,13 +78,18 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
 
     # Now we look at the count from the rust code and make changes to the vocab
-    token_ids, pair_counts, special_token_bytes = rust_bpe.pre_tokenize(input_path, special_tokens)
+    token_ids, pair_counts, special_token_bytes, boundary = rust_bpe.pre_tokenize(input_path, special_tokens)
+    # print("Token IDs:", token_ids)
+    # print("Pair Counts:", pair_counts)
+    # print("Special Token Bytes:", special_token_bytes)
+    # print("Boundary:", boundary)
+
     while(len(vocab) < vocab_size):
 
         # Find pair with max count:
         best_pair = max(
             pair_counts,
-            key=lambda p: (pair_counts[p], vocab[p[0]] + vocab[p[1]])
+            key=lambda p: (pair_counts[p], (vocab[p[0]], vocab[p[1]]))
         )
 
         # Add this pair to the merge and the vocab
@@ -94,21 +99,36 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         occurances = []
         # Find all occurances of best pair in the token_ids pre-tokenized list
         for i in range(len(token_ids)-1):
-
+            if boundary[i]:    # Don't merge across pre-token boundary
+                continue
             if token_ids[i] == best_pair[0] and token_ids[i+1] == best_pair[1]:
                 occurances.append(i)
 
         for i in occurances:
+            boundary[i] = boundary[i+1]
             token_ids[i] = len(vocab)-1
             token_ids[i+1] = None
         
         # Clean up the None entries from token_ids
-        token_ids = [t for t in token_ids if t is not None]
+        # token_ids = [t for t in token_ids if t is not None]
+        new_ids = []
+        new_boundary = []
+        for t, b in zip(token_ids, boundary):
+            if t is not None:
+                new_ids.append(t)
+                new_boundary.append(b)
+        token_ids = new_ids
+        boundary = new_boundary
 
         # Go through the token_ids and recompute the pair_count array
         pair_counts = {}
         for i in range(len(token_ids)-1):
+            if boundary[i]:
+                continue
             pair = (token_ids[i], token_ids[i+1])
+            if (pair[0] >= 256 and pair[0] < 256 + len(special_tokens)) or \
+            (pair[1] >= 256 and pair[1] < 256 + len(special_tokens)):
+                continue
             pair_counts[pair] = pair_counts.get(pair, 0) + 1
 
 
@@ -135,4 +155,4 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
     return vocab_dict, merges_bytes
 
 if __name__ == "__main__":
-    train_bpe('hello', 123, ['asdas'])
+    train_bpe('tests/fixtures/tiny_debug.txt', 500, ["<|endoftext|>"])

@@ -53,24 +53,71 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
     let text = fs::read_to_string(&file_path)?;
     let pat = Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+").unwrap();
     // let pre_tokens: Vec<&str> = pat.find_iter(&text).map(|m| m.as_str()).collect();
-    let pre_tokens: Vec<&str> = pat.find_iter(&text).filter_map(|m| m.ok()).map(|m| m.as_str()).collect();
+
+    let mut segments: Vec<&str> = vec![&text];
+
+    for special_token in &special_tokens {
+        let mut new_segments = Vec::new();
+        for segment in segments {
+            if segment == special_token{
+                new_segments.push(segment);
+            } else
+            {
+                let parts: Vec<&str> = segment.split(special_token).collect();
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        new_segments.push(special_token.as_str());
+                    }
+                    if !part.is_empty() {
+                        new_segments.push(*part);
+                    }
+                }
+            }
+        }
+
+        segments = new_segments;
+    }
+
     let mut token_ids: Vec<usize> = Vec::new();
-    for pre_token in &pre_tokens {
-        for byte in pre_token.as_bytes() {
-            token_ids.push(*byte as usize);
+    let mut boundary: Vec<bool> = Vec::new();
+
+    for seg in segments{
+        let idx = special_tokens.iter().position(|s| s == seg);
+
+        if idx.is_some() {
+            token_ids.push(256 + idx.unwrap()); // Special token IDs start after byte tokens (0-255)
+            boundary.push(true);
+        } else {
+            let mut seg_pre_tokens: Vec<&str> = pat.find_iter(seg).filter_map(|m| m.ok()).map(|m| m.as_str()).collect();
+            for pre_token in seg_pre_tokens {
+                let bytes = pre_token.as_bytes();
+                for (j, byte) in bytes.iter().enumerate() {
+                    token_ids.push(*byte as usize);
+                    boundary.push(j == bytes.len() - 1); // Mark the end of a pre-token
+                }
+            }
         }
     }
 
     let mut pair_counts: HashMap<(usize, usize), usize> = HashMap::new();
-    for window in token_ids.windows(2) {
-        let pair = (window[0], window[1]);
+
+    for i in 0..token_ids.len().saturating_sub(1) {
+        if boundary[i] { // Don't count pairs that cross pre-token boundaries
+            continue;
+        }
+        let pair = (token_ids[i], token_ids[i + 1]);
+        if (pair.0 >= 256 && pair.0 < 256 + special_tokens.len()) || 
+        (pair.1 >= 256 && pair.1 < 256 + special_tokens.len()) {
+            continue;
+        }
         *pair_counts.entry(pair).or_insert(0) += 1;
     }
+
 
     let encoded_special: Vec<Vec<u8>> = special_tokens.iter().map(|t| t.as_bytes().to_vec()).collect();
 
     Python::with_gil(|py| {
-        Ok((token_ids, pair_counts, encoded_special).into_pyobject(py)?.into())
+        Ok((token_ids, pair_counts, encoded_special, boundary).into_pyobject(py)?.into())
     })
 }
 

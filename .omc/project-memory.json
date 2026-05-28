@@ -1,0 +1,117 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1779955065568,
+  "projectRoot": "/Users/stav.42/courses/assignment1-basics",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "cs336_basics": {
+      "path": "cs336_basics",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1779955065530,
+      "keyFiles": [
+        "__init__.py",
+        "pretokenization_example.py",
+        "train_bpe.py"
+      ]
+    },
+    "rust_bpe": {
+      "path": "rust_bpe",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1779955065532,
+      "keyFiles": [
+        "Cargo.lock",
+        "Cargo.toml"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 12,
+      "lastAccessed": 1779955065532,
+      "keyFiles": [
+        "__init__.py",
+        "adapters.py",
+        "common.py",
+        "conftest.py",
+        "test_data.py"
+      ]
+    },
+    "rust_bpe/src": {
+      "path": "rust_bpe/src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1779955065534,
+      "keyFiles": [
+        "lib.rs",
+        "main.rs"
+      ]
+    },
+    "tests/fixtures": {
+      "path": "tests/fixtures",
+      "purpose": "Test fixtures",
+      "fileCount": 11,
+      "lastAccessed": 1779955065535,
+      "keyFiles": [
+        "address.txt",
+        "corpus.en",
+        "german.txt"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "tests/fixtures/tiny_debug.txt",
+      "accessCount": 1,
+      "lastAccessed": 1779955527533,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

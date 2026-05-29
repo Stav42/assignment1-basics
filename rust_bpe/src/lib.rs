@@ -46,18 +46,26 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fs;
+use std::time::Instant;
 use rayon::prelude::*;
 use fancy_regex::Regex;
 
 #[pyfunction]
 fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyObject> {
+    let t_total = Instant::now();
+    
+    let t_read = Instant::now();
     let text = fs::read_to_string(&file_path)?;
+    println!("  [Rust 1/6] File read: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
+    
+    let t_regex = Instant::now();
     let pat = Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+").unwrap();
+    println!("  [Rust 2/6] Regex compiled: {:.3}s", t_regex.elapsed().as_secs_f64());
     // let pre_tokens: Vec<&str> = pat.find_iter(&text).map(|m| m.as_str()).collect();
 
     let mut segments: Vec<&str> = vec![&text];
 
-    
+    let t_split = Instant::now();
     for special_token in &special_tokens {
         let new_segments = segments.into_par_iter().map( |segment| {
             if segment == special_token {
@@ -81,10 +89,12 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
 
         segments = new_segments;
     }
+    println!("  [Rust 3/6] Special token split: {:.1}s ({} segments)", t_split.elapsed().as_secs_f64(), segments.len());
 
     let mut token_ids: Vec<usize> = Vec::new();
     let mut boundary: Vec<bool> = Vec::new();
 
+    let t_tokenize = Instant::now();
     for seg in segments{
         let idx = special_tokens.iter().position(|s| s == seg);
 
@@ -97,12 +107,14 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
                 let bytes = pre_token.as_bytes();
                 for (j, byte) in bytes.iter().enumerate() {
                     token_ids.push(*byte as usize);
-                    boundary.push(j == bytes.len() - 1); // Mark the end of a pre-token
+                    boundary.push(j == bytes.len() - 1);
                 }
             }
         }
     }
+    println!("  [Rust 4/6] Tokenization: {:.1}s ({} token_ids)", t_tokenize.elapsed().as_secs_f64(), token_ids.len());
 
+    let t_pairs = Instant::now();
     let mut pair_counts: HashMap<(usize, usize), usize> = (0..token_ids.len().saturating_sub(1)).into_par_iter().fold(
         || HashMap::new(), // Initial empty pair count for each thread
         |mut pair_counts, token_idx| {
@@ -125,6 +137,7 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
                 a
             }
         );
+    println!("  [Rust 5/6] Pair counting: {:.1}s ({} unique pairs)", t_pairs.elapsed().as_secs_f64(), pair_counts.len());
     
 
     // for i in 0..token_ids.len().saturating_sub(1) {
@@ -142,6 +155,8 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
 
     let encoded_special: Vec<Vec<u8>> = special_tokens.iter().map(|t| t.as_bytes().to_vec()).collect();
 
+    println!("  [Rust 6/6] Total Rust time: {:.1}s", t_total.elapsed().as_secs_f64());
+    
     Python::with_gil(|py| {
         Ok((token_ids, pair_counts, encoded_special, boundary).into_pyobject(py)?.into())
     })

@@ -161,7 +161,13 @@ def _apply_merge_at(
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
-    t0 = time.perf_counter()
+    PROGRESS_INTERVAL = 1  # Print progress every N merges. Lower = more frequent.
+
+    t_total = time.perf_counter()
+    print(f"[BPE] === Training started ===", flush=True)
+    print(f"[BPE] input_path={input_path}", flush=True)
+    print(f"[BPE] vocab_size={vocab_size}  special_tokens={special_tokens}", flush=True)
+    t_phase = time.perf_counter()
 
     # Build initial vocabulary: bytes 0-255, then special tokens
     vocab: list[bytes] = [bytes([i]) for i in range(256)]
@@ -170,57 +176,96 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
     merges: list[tuple] = []
     num_special = len(special_tokens)
+    print(f"[BPE] Vocab setup done in {time.perf_counter() - t_phase:.3f}s "
+          f"(initial size = {len(vocab)})", flush=True)
 
-    # print(f"Block A Clock: {time.perf_counter() - t0:.3f}s")
-    t2 = time.perf_counter()
-
+    print(f"[BPE] Calling Rust pre_tokenize ...", flush=True)
+    t_phase = time.perf_counter()
     token_ids, pair_counts, special_token_bytes, boundary = rust_bpe.pre_tokenize(input_path, special_tokens)
-    pair_locations = _build_pair_locations(token_ids, special_tokens, boundary)
+    t_rust = time.perf_counter() - t_phase
+    print(f"[BPE] Rust pre_tokenize done in {t_rust:.2f}s", flush=True)
+    print(f"[BPE]   token_ids length: {len(token_ids):,}", flush=True)
+    print(f"[BPE]   initial distinct pairs: {len(pair_counts):,}", flush=True)
+    if pair_counts:
+        max_pair = max(pair_counts, key=pair_counts.get)
+        print(f"[BPE]   most common pair: {max_pair} -> {pair_counts[max_pair]:,}", flush=True)
 
-    # print(f"Block B Clock: {time.perf_counter() - t2:.3f}s")
-    t3 = time.perf_counter()
+    print(f"[BPE] Building pair_locations index ...", flush=True)
+    t_phase = time.perf_counter()
+    pair_locations = _build_pair_locations(token_ids, special_tokens, boundary)
+    t_index = time.perf_counter() - t_phase
+    print(f"[BPE] pair_locations built in {t_index:.2f}s "
+          f"({len(pair_locations):,} keys)", flush=True)
+
+    total_merges_target = vocab_size - len(vocab)
+    print(f"[BPE] Starting merge loop: {total_merges_target:,} merges to perform", flush=True)
+    t_loop_start = time.perf_counter()
+    merge_count = 0
+    rolling_window_t = 0.0  # accumulated time since last progress print
 
     while len(vocab) < vocab_size:
-        # t0 = time.perf_counter()
-        # print(f"Merge iteration, vocab size: {len(vocab)}")
+        t_iter_start = time.perf_counter()
 
-        # Pick the most frequent pair; break ties lexicographically by token bytes
+        t0 = time.perf_counter()
+        print("[DEBUG] Finding best pair ...", flush=True)
         best_pair = max(
             pair_counts,
             key=lambda p: (pair_counts[p], (vocab[p[0]], vocab[p[1]]))
         )
+        print(f"[DEBUG] Best pair found: {best_pair} with count {pair_counts[best_pair]:,}", flush=True)
+        t_find = time.perf_counter() - t0
 
-        # print("Best pair clock: ", time.perf_counter() - t0)
-        t1 = time.perf_counter()
-
+        t0 = time.perf_counter()
         new_id = len(vocab)
+        print(f"[DEBUG] Merging pair {best_pair} into new token ID {new_id} ...", flush=True)
         vocab.append(vocab[best_pair[0]] + vocab[best_pair[1]])
         merges.append(best_pair)
 
+        print(f"[DEBUG] Applying merge to all occurrences of {best_pair} ...", flush=True)
         occurrences = pair_locations.pop(best_pair, [])
         del pair_counts[best_pair]
 
         last_merged_pos = None
         for i in sorted(occurrences):
-            # Skip if this occurrence overlaps with a previous merge in this round
             if last_merged_pos is not None and i < last_merged_pos + 2:
                 continue
             last_merged_pos = i
-
             _apply_merge_at(
                 i, new_id, best_pair,
                 token_ids, boundary,
                 pair_counts, pair_locations,
                 num_special,
             )
+        t_apply = time.perf_counter() - t0
+        t_iter = time.perf_counter() - t_iter_start
+        merge_count += 1
+        rolling_window_t += t_iter
 
-        # print("Occurrences clock: ", time.perf_counter() - t1)
-        t2 = time.perf_counter()
+        if merge_count % PROGRESS_INTERVAL == 0:
+            elapsed = time.perf_counter() - t_loop_start
+            avg_ms = (rolling_window_t / PROGRESS_INTERVAL) * 1000
+            remaining = total_merges_target - merge_count
+            eta_s = (elapsed / merge_count) * remaining if merge_count > 0 else 0
+            print(
+                f"[BPE] merge {merge_count:>5}/{total_merges_target}  "
+                f"vocab={len(vocab):>5}  "
+                f"best_pair={best_pair} (n={len(occurrences):,})  "
+                f"iter={t_iter*1000:6.1f}ms (avg {avg_ms:5.1f}ms)  "
+                f"find={t_find*1000:5.1f}ms apply={t_apply*1000:6.1f}ms  "
+                f"pairs={len(pair_counts):,}  "
+                f"elapsed={elapsed:6.1f}s  ETA={eta_s:6.1f}s",
+                flush=True,
+            )
+            rolling_window_t = 0.0
 
-        # print("Cleanup clock: ", time.perf_counter() - t2)
-        t3 = time.perf_counter()
-
-    print(f"Total clock: {time.perf_counter() - t0:.3f}s")
+    t_loop = time.perf_counter() - t_loop_start
+    t_grand = time.perf_counter() - t_total
+    print(f"[BPE] === Training complete ===", flush=True)
+    print(f"[BPE]   Rust pre_tokenize : {t_rust:8.2f}s", flush=True)
+    print(f"[BPE]   build pair index  : {t_index:8.2f}s", flush=True)
+    print(f"[BPE]   merge loop        : {t_loop:8.2f}s ({merge_count} merges)", flush=True)
+    print(f"[BPE]   TOTAL             : {t_grand:8.2f}s", flush=True)
+    print(f"[BPE]   final vocab size  : {len(vocab):,}", flush=True)
 
     vocab_dict = {i: vocab[i] for i in range(len(vocab))}
     merges_bytes = [(vocab[a], vocab[b]) for a, b in merges]
@@ -229,4 +274,25 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
 
 if __name__ == "__main__":
-    train_bpe('tests/fixtures/tiny_debug.txt', 500, ["<|endoftext|>"])
+    import tracemalloc
+    tracemalloc.start()
+    print("Training BPE tokenizer...")
+    t0 = time.perf_counter()
+    vocab_dict, merges_bytes = train_bpe('/Users/stav.42/courses/assignment1-basics/TinyStories-valid.txt', 10000, ["<|endoftext|>"])
+    print(f"Total training time: {time.perf_counter() - t0:.3f}s")
+    # Track max memory usage
+    current, peak = tracemalloc.get_traced_memory()
+    print(f"Current memory usage: {current / 1024 / 1024:.1f} MB; Peak memory usage: {peak / 1024 / 1024:.1f} MB")
+    tracemalloc.stop()
+    #Get longest string in vocab
+    longest_string = max(vocab_dict.values(), key=len)
+    print(f"Longest string in vocab: {longest_string.decode('utf-8')}")
+
+    # Save in pickle files
+    import pickle
+    with open('vocab_dict.pkl', 'wb') as f:
+        pickle.dump(vocab_dict, f)
+    with open('merges_bytes.pkl', 'wb') as f:
+        pickle.dump(merges_bytes, f)
+
+    print("Vocabulary and merges saved to vocab_dict.pkl and merges_bytes.pkl")

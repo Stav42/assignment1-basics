@@ -108,8 +108,14 @@
   "hotPaths": [
     {
       "path": "rust_bpe/src/lib.rs",
+      "accessCount": 3,
+      "lastAccessed": 1780064247176,
+      "type": "file"
+    },
+    {
+      "path": "cs336_basics/train_bpe.py",
       "accessCount": 2,
-      "lastAccessed": 1780051167378,
+      "lastAccessed": 1780064246803,
       "type": "file"
     },
     {
@@ -119,15 +125,21 @@
       "type": "file"
     },
     {
-      "path": "cs336_basics/train_bpe.py",
-      "accessCount": 1,
-      "lastAccessed": 1780040320939,
-      "type": "file"
-    },
-    {
       "path": "cs336_basics/train_bpe_optimal_fail.py",
       "accessCount": 1,
       "lastAccessed": 1780040322261,
+      "type": "file"
+    },
+    {
+      "path": "cs336_assignment1_basics.pdf",
+      "accessCount": 1,
+      "lastAccessed": 1780063566085,
+      "type": "file"
+    },
+    {
+      "path": "assignment1_pages_1-12.md",
+      "accessCount": 1,
+      "lastAccessed": 1780063721971,
       "type": "file"
     }
   ],

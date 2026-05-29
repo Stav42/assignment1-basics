@@ -107,9 +107,27 @@
   },
   "hotPaths": [
     {
+      "path": "rust_bpe/src/lib.rs",
+      "accessCount": 2,
+      "lastAccessed": 1780051167378,
+      "type": "file"
+    },
+    {
       "path": "tests/fixtures/tiny_debug.txt",
       "accessCount": 1,
       "lastAccessed": 1779955527533,
+      "type": "file"
+    },
+    {
+      "path": "cs336_basics/train_bpe.py",
+      "accessCount": 1,
+      "lastAccessed": 1780040320939,
+      "type": "file"
+    },
+    {
+      "path": "cs336_basics/train_bpe_optimal_fail.py",
+      "accessCount": 1,
+      "lastAccessed": 1780040322261,
       "type": "file"
     }
   ],

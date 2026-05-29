@@ -54,105 +54,179 @@
 
 
 import rust_bpe
+import time
+
+
+def _is_special(token_id: int, num_special: int) -> bool:
+    """Return True if token_id is a special token (IDs 256 .. 256+num_special-1)."""
+    return 256 <= token_id < 256 + num_special
+
+
+def _build_pair_locations(token_ids: list, special_tokens: list, boundary: list) -> dict:
+    """
+    Build a mapping from each adjacent pair to the list of positions (anchored at
+    the left element) where that pair appears in token_ids.
+
+    Pairs that cross a word/document boundary or involve a special token are excluded.
+    """
+    num_special = len(special_tokens)
+    pair_locations: dict = {}
+    for i in range(len(token_ids) - 1):
+        if boundary[i]:
+            continue
+        if _is_special(token_ids[i], num_special) or _is_special(token_ids[i + 1], num_special):
+            continue
+        pair = (token_ids[i], token_ids[i + 1])
+        pair_locations.setdefault(pair, []).append(i)
+    return pair_locations
+
+
+def _apply_merge_at(
+    i: int,
+    new_id: int,
+    best_pair: tuple,
+    token_ids: list,
+    boundary: list,
+    pair_counts: dict,
+    pair_locations: dict,
+    num_special: int,
+):
+    """
+    Apply a single merge occurrence at position i:
+      - Find the actual positions of best_pair[1] (i2) and the right neighbor.
+      - Null out i2, write new_id at i, update boundary.
+      - Decrement/remove stale pairs (left, best_pair[0]) and (best_pair[1], right).
+      - Increment/add new pairs (left, new_id) and (new_id, right).
+    """
+    # --- Scan left: find the nearest non-None token before i ---
+    left_val = None
+    left_pos = None
+    for pos in range(i - 1, -1, -1):
+        if token_ids[pos] is not None:
+            left_val = token_ids[pos]
+            left_pos = pos
+            break
+
+    # --- Scan right (1st hit): position of best_pair[1] ---
+    i2 = None
+    for pos in range(i + 1, len(token_ids)):
+        if token_ids[pos] is not None:
+            i2 = pos
+            break
+
+    # --- Scan right (2nd hit): the right neighbor ---
+    right_val = None
+    right_pos = None
+    if i2 is not None:
+        for pos in range(i2 + 1, len(token_ids)):
+            if token_ids[pos] is not None:
+                right_val = token_ids[pos]
+                right_pos = pos
+                break
+
+    # --- Apply the merge in-place ---
+    boundary[i] = boundary[i2]
+    token_ids[i] = new_id
+    token_ids[i2] = None
+
+    # --- Update left-side pairs ---
+    if left_val is not None and not _is_special(left_val, num_special) and not boundary[left_pos]:
+        old_left_pair = (left_val, best_pair[0])
+        if old_left_pair in pair_counts:
+            pair_counts[old_left_pair] -= 1
+            if pair_counts[old_left_pair] == 0:
+                del pair_counts[old_left_pair]
+            pair_locations[old_left_pair].remove(left_pos)
+            if not pair_locations[old_left_pair]:
+                del pair_locations[old_left_pair]
+
+        new_left_pair = (left_val, new_id)
+        pair_counts[new_left_pair] = pair_counts.get(new_left_pair, 0) + 1
+        pair_locations.setdefault(new_left_pair, []).append(left_pos)
+
+    # --- Update right-side pairs ---
+    if right_val is not None and not _is_special(right_val, num_special) and not boundary[i]:
+        old_right_pair = (best_pair[1], right_val)
+        if old_right_pair in pair_counts:
+            pair_counts[old_right_pair] -= 1
+            if pair_counts[old_right_pair] == 0:
+                del pair_counts[old_right_pair]
+            pair_locations[old_right_pair].remove(i2)
+            if not pair_locations[old_right_pair]:
+                del pair_locations[old_right_pair]
+
+        new_right_pair = (new_id, right_val)
+        pair_counts[new_right_pair] = pair_counts.get(new_right_pair, 0) + 1
+        pair_locations.setdefault(new_right_pair, []).append(i)
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
+    t0 = time.perf_counter()
 
-    # Let's load the file. After each story there is an <|endoftext|> token, so we use that to split 
-    # and also introduce that as a special token in the vocab.
-    # counts = rust_bpe.count_byte_pairs(input_path, special_tokens)
-
-    # Now we will write the merge operation and build up the vocab
-    
-    # Base vocab setup
-    vocab = []
-    for i in range(256):
-        vocab.append(bytes([i]))
-
-    # vocab.append('<|endoftext|>'.encode('utf-8'))
-
+    # Build initial vocabulary: bytes 0-255, then special tokens
+    vocab: list[bytes] = [bytes([i]) for i in range(256)]
     for token in special_tokens:
         vocab.append(token.encode('utf-8'))
 
-    merges = []
+    merges: list[tuple] = []
+    num_special = len(special_tokens)
 
+    # print(f"Block A Clock: {time.perf_counter() - t0:.3f}s")
+    t2 = time.perf_counter()
 
-    # Now we look at the count from the rust code and make changes to the vocab
     token_ids, pair_counts, special_token_bytes, boundary = rust_bpe.pre_tokenize(input_path, special_tokens)
-    # print("Token IDs:", token_ids)
-    # print("Pair Counts:", pair_counts)
-    # print("Special Token Bytes:", special_token_bytes)
-    # print("Boundary:", boundary)
+    pair_locations = _build_pair_locations(token_ids, special_tokens, boundary)
 
-    while(len(vocab) < vocab_size):
+    # print(f"Block B Clock: {time.perf_counter() - t2:.3f}s")
+    t3 = time.perf_counter()
 
-        # Find pair with max count:
+    while len(vocab) < vocab_size:
+        # t0 = time.perf_counter()
+        # print(f"Merge iteration, vocab size: {len(vocab)}")
+
+        # Pick the most frequent pair; break ties lexicographically by token bytes
         best_pair = max(
             pair_counts,
             key=lambda p: (pair_counts[p], (vocab[p[0]], vocab[p[1]]))
         )
 
-        # Add this pair to the merge and the vocab
+        # print("Best pair clock: ", time.perf_counter() - t0)
+        t1 = time.perf_counter()
+
+        new_id = len(vocab)
         vocab.append(vocab[best_pair[0]] + vocab[best_pair[1]])
         merges.append(best_pair)
 
-        occurances = []
-        # Find all occurances of best pair in the token_ids pre-tokenized list
-        for i in range(len(token_ids)-1):
-            if boundary[i]:    # Don't merge across pre-token boundary
+        occurrences = pair_locations.pop(best_pair, [])
+        del pair_counts[best_pair]
+
+        last_merged_pos = None
+        for i in sorted(occurrences):
+            # Skip if this occurrence overlaps with a previous merge in this round
+            if last_merged_pos is not None and i < last_merged_pos + 2:
                 continue
-            if token_ids[i] == best_pair[0] and token_ids[i+1] == best_pair[1]:
-                occurances.append(i)
+            last_merged_pos = i
 
-        for i in occurances:
-            boundary[i] = boundary[i+1]
-            token_ids[i] = len(vocab)-1
-            token_ids[i+1] = None
-        
-        # Clean up the None entries from token_ids
-        # token_ids = [t for t in token_ids if t is not None]
-        new_ids = []
-        new_boundary = []
-        for t, b in zip(token_ids, boundary):
-            if t is not None:
-                new_ids.append(t)
-                new_boundary.append(b)
-        token_ids = new_ids
-        boundary = new_boundary
+            _apply_merge_at(
+                i, new_id, best_pair,
+                token_ids, boundary,
+                pair_counts, pair_locations,
+                num_special,
+            )
 
-        # Go through the token_ids and recompute the pair_count array
-        pair_counts = {}
-        for i in range(len(token_ids)-1):
-            if boundary[i]:
-                continue
-            pair = (token_ids[i], token_ids[i+1])
-            if (pair[0] >= 256 and pair[0] < 256 + len(special_tokens)) or \
-            (pair[1] >= 256 and pair[1] < 256 + len(special_tokens)):
-                continue
-            pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        # print("Occurrences clock: ", time.perf_counter() - t1)
+        t2 = time.perf_counter()
 
+        # print("Cleanup clock: ", time.perf_counter() - t2)
+        t3 = time.perf_counter()
 
-        
-
-        # Step 1: get the pair with max count
-        # Step 2: add that as a merged element in the vocab
-        # Step 3: remove that pair_count from the pair_count variable
-        # Step 4: Decrease the count of the other pair elements by this amount. The other
-        # pairs to remove it from must have the first of the pair as its end element, 
-        # and the second of hte pair as teh first element. 
-        # Step 5: Introduce a new element for each pair that we decrement at step 4. Each of 
-        # these new elements must have the merged element as either prefix or suffix
-        # and count of the merged element must be added.
-        # Step 6: Go back to Step 1, and repeat till len(vocab)>vocab_size
-
-
-    # vocab.append(bytes(i).decode('utf-8') for i in range(256))
-    print(vocab)
+    print(f"Total clock: {time.perf_counter() - t0:.3f}s")
 
     vocab_dict = {i: vocab[i] for i in range(len(vocab))}
-    merges_bytes = [(vocab[mrg[0]], vocab[mrg[1]]) for mrg in merges]
+    merges_bytes = [(vocab[a], vocab[b]) for a, b in merges]
 
     return vocab_dict, merges_bytes
+
 
 if __name__ == "__main__":
     train_bpe('tests/fixtures/tiny_debug.txt', 500, ["<|endoftext|>"])

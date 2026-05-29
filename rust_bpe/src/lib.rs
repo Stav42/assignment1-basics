@@ -46,6 +46,7 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fs;
+use rayon::prelude::*;
 use fancy_regex::Regex;
 
 #[pyfunction]
@@ -56,6 +57,7 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
 
     let mut segments: Vec<&str> = vec![&text];
 
+    
     for special_token in &special_tokens {
         let mut new_segments = Vec::new();
         for segment in segments {

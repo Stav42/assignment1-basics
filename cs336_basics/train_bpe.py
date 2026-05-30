@@ -52,161 +52,62 @@ import time
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
-    DEBUG = True    # Set to True to enable verbose per-merge debug output.
-    VERBOSE = True    # Set to True to enable [BPE] progress/timing output.
-    PROGRESS_INTERVAL = 1  # Print progress every N merges. Lower = more frequent.
+    VERBOSE = True
+    PROGRESS_INTERVAL = 1  # Print progress every N merges
 
     t_total = time.perf_counter()
     if VERBOSE: print(f"[BPE] === Training started ===", flush=True)
     if VERBOSE: print(f"[BPE] input_path={input_path}", flush=True)
     if VERBOSE: print(f"[BPE] vocab_size={vocab_size}  special_tokens={special_tokens}", flush=True)
-    t_phase = time.perf_counter()
 
-    # Build initial vocabulary: bytes 0-255, then special tokens
-    vocab: list[bytes] = [bytes([i]) for i in range(256)]
-    for token in special_tokens:
-        vocab.append(token.encode('utf-8'))
-
-    merges: list[tuple] = []
-    if VERBOSE: print(f"[BPE] Vocab setup done in {time.perf_counter() - t_phase:.3f}s "
-          f"(initial size = {len(vocab)})", flush=True)
-
+    # Step 1: Rust pre-tokenization (parallel, memory-mapped)
     if VERBOSE: print(f"[BPE] Calling Rust pre_tokenize ...", flush=True)
     t_phase = time.perf_counter()
     raw_word_counts = rust_bpe.pre_tokenize(input_path, special_tokens)
     t_rust = time.perf_counter() - t_phase
-
-    # Convert bytes keys to tuple[int, ...] for Python-side processing
-    if VERBOSE: print(f"[BPE] Converting word_counts ...", flush=True)
-    word_counts = {tuple(b): count for b, count in raw_word_counts.items()}
-
-    # Build pair_counts from word_counts
-    if VERBOSE: print(f"[BPE] Building pair_counts ...", flush=True)
-    pair_counts = {}
-    for word, count in word_counts.items():
-        for i in range(len(word) - 1):
-            pair = (word[i], word[i + 1])
-            pair_counts[pair] = pair_counts.get(pair, 0) + count
-
-    # Build pair_to_words from word_counts
-    if VERBOSE: print(f"[BPE] Building pair_to_words ...", flush=True)
-    pair_to_words = {}
-    for word in word_counts.keys():
-        for i in range(len(word) - 1):
-            pair = (word[i], word[i + 1])
-            if pair not in pair_to_words:
-                pair_to_words[pair] = set()
-            pair_to_words[pair].add(word)
-
     if VERBOSE: print(f"[BPE] Rust pre_tokenize done in {t_rust:.2f}s", flush=True)
-    if VERBOSE: print(f"[BPE]   unique words: {len(word_counts):,}", flush=True)
-    if VERBOSE: print(f"[BPE]   initial distinct pairs: {len(pair_counts):,}", flush=True)
-    if VERBOSE and pair_counts:
-        max_pair = max(pair_counts, key=pair_counts.get)
-        print(f"[BPE]   most common pair: {max_pair} -> {pair_counts[max_pair]:,}", flush=True)
+    if VERBOSE: print(f"[BPE]   unique words: {len(raw_word_counts):,}", flush=True)
 
-    total_merges_target = vocab_size - len(vocab)
+    # Step 2: Initialize Rust BpeTrainer (builds vocab, pair_counts, pair_to_words)
+    num_special = len(special_tokens)
+    special_tokens_bytes = [t.encode('utf-8') for t in special_tokens]
+    if VERBOSE: print(f"[BPE] Initializing Rust BpeTrainer ...", flush=True)
+    t_phase = time.perf_counter()
+    trainer = rust_bpe.BpeTrainer(raw_word_counts, special_tokens_bytes)
+    t_init = time.perf_counter() - t_phase
+    if VERBOSE: print(f"[BPE] BpeTrainer init done in {t_init:.2f}s (vocab={trainer.vocab_len})", flush=True)
+
+    # Step 3: Merge loop with progress reporting
+    total_merges_target = vocab_size - trainer.vocab_len
     if VERBOSE: print(f"[BPE] Starting merge loop: {total_merges_target:,} merges to perform", flush=True)
     t_loop_start = time.perf_counter()
-    merge_count = 0
-    rolling_window_t = 0.0  # accumulated time since last progress print
 
-    while len(vocab) < vocab_size:
-        t_iter_start = time.perf_counter()
-
-        t0 = time.perf_counter()
-        if DEBUG: print("[DEBUG] Finding best pair ...", flush=True)
-        best_pair = max(
-            pair_counts,
-            key=lambda p: (pair_counts[p], (vocab[p[0]], vocab[p[1]]))
-        )
-        if DEBUG: print(f"[DEBUG] Best pair found: {best_pair} with count {pair_counts[best_pair]:,}", flush=True)
-        t_find = time.perf_counter() - t0
-
-        t0 = time.perf_counter()
-        new_id = len(vocab)
-        if DEBUG: print(f"[DEBUG] Merging pair {best_pair} into new token ID {new_id} ...", flush=True)
-        vocab.append(vocab[best_pair[0]] + vocab[best_pair[1]])
-        merges.append(best_pair)
-
-        ### New implementation
-        affected = pair_to_words.get(best_pair, set())
-        del pair_to_words[best_pair]
-
-        for word in affected:
-            count = word_counts[word]
-            new_word = []
-            i = 0
-            while i < len(word):
-                if i < len(word) - 1 and (word[i], word[i + 1]) == best_pair:
-                    new_word.append(new_id)
-                    i += 2
-                else:
-                    new_word.append(word[i])
-                    i += 1
-
-            new_word = tuple(new_word)
-            
-            # Update pair_deltas
-            for i in range(len(word) - 1):
-                pair = (word[i], word[i + 1])
-                pair_counts[pair] -= count
-                if pair_counts[pair] == 0:
-                    del pair_counts[pair]
-
-                # Remove old pair from pair_to_words
-                if pair in pair_to_words:
-                    pair_to_words[pair].discard(word)
-                    if not pair_to_words[pair]:
-                        del pair_to_words[pair]
-
-                
-                
-            for i in range(len(new_word) - 1):
-                pair = (new_word[i], new_word[i + 1])
-                pair_counts[pair] = pair_counts.get(pair, 0) + count
-
-                if pair not in pair_to_words:
-                    pair_to_words[pair] = set()
-                pair_to_words[pair].add(new_word)
-
-            del word_counts[word]
-            word_counts[new_word] = count
-
-        if DEBUG: print(f"[DEBUG] Applying merge to all occurrences of {best_pair} ...", flush=True)
-
-        t_apply = time.perf_counter() - t0
-        t_iter = time.perf_counter() - t_iter_start
-        merge_count += 1
-        rolling_window_t += t_iter
-
-        if VERBOSE and merge_count % PROGRESS_INTERVAL == 0:
+    while trainer.vocab_len < vocab_size:
+        trainer.step()
+        if VERBOSE and trainer.merge_count % PROGRESS_INTERVAL == 0:
             elapsed = time.perf_counter() - t_loop_start
-            avg_ms = (rolling_window_t / PROGRESS_INTERVAL) * 1000
-            remaining = total_merges_target - merge_count
-            eta_s = (elapsed / merge_count) * remaining if merge_count > 0 else 0
+            remaining = total_merges_target - trainer.merge_count
+            eta_s = (elapsed / trainer.merge_count) * remaining if trainer.merge_count > 0 else 0
             print(
-                f"[BPE] merge {merge_count:>5}/{total_merges_target}  "
-                f"vocab={len(vocab):>5}  "
-                f"best_pair={best_pair}  "
-                f"iter={t_iter*1000:6.1f}ms (avg {avg_ms:5.1f}ms)  "
-                f"find={t_find*1000:5.1f}ms apply={t_apply*1000:6.1f}ms  "
-                f"pairs={len(pair_counts):,}  "
+                f"[BPE] merge {trainer.merge_count:>5}/{total_merges_target}  "
+                f"vocab={trainer.vocab_len:>5}  "
                 f"elapsed={elapsed:6.1f}s  ETA={eta_s:6.1f}s",
                 flush=True,
             )
-            rolling_window_t = 0.0
 
     t_loop = time.perf_counter() - t_loop_start
+
+    # Step 4: Finalize — get vocab and merges from Rust
+    vocab_list, merges_bytes = trainer.finalize()
+    vocab_dict = {i: b for i, b in enumerate(vocab_list)}
+
     t_grand = time.perf_counter() - t_total
     if VERBOSE: print(f"[BPE] === Training complete ===", flush=True)
     if VERBOSE: print(f"[BPE]   Rust pre_tokenize : {t_rust:8.2f}s", flush=True)
-    if VERBOSE: print(f"[BPE]   merge loop        : {t_loop:8.2f}s ({merge_count} merges)", flush=True)
+    if VERBOSE: print(f"[BPE]   BpeTrainer init   : {t_init:8.2f}s", flush=True)
+    if VERBOSE: print(f"[BPE]   merge loop        : {t_loop:8.2f}s ({trainer.merge_count} merges)", flush=True)
     if VERBOSE: print(f"[BPE]   TOTAL             : {t_grand:8.2f}s", flush=True)
-    if VERBOSE: print(f"[BPE]   final vocab size  : {len(vocab):,}", flush=True)
-
-    vocab_dict = {i: vocab[i] for i in range(len(vocab))}
-    merges_bytes = [(vocab[a], vocab[b]) for a, b in merges]
+    if VERBOSE: print(f"[BPE]   final vocab size  : {len(vocab_dict):,}", flush=True)
 
     return vocab_dict, merges_bytes
 

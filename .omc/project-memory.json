@@ -108,14 +108,14 @@
   "hotPaths": [
     {
       "path": "rust_bpe/src/lib.rs",
-      "accessCount": 4,
-      "lastAccessed": 1780151845086,
+      "accessCount": 5,
+      "lastAccessed": 1780180713070,
       "type": "file"
     },
     {
       "path": "cs336_basics/train_bpe.py",
-      "accessCount": 3,
-      "lastAccessed": 1780151844064,
+      "accessCount": 4,
+      "lastAccessed": 1780180712520,
       "type": "file"
     },
     {

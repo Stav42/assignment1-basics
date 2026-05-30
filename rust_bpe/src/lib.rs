@@ -1,9 +1,9 @@
 // Rust BPE: pre-tokenization + parallel pair counting
 //
 // Strategy:
-//   1. Rust reads the file and pre-tokenizes + counts byte pairs (parallel).
-//   2. Rust returns the full pre-tokenized text as a flat list of token IDs.
-//   3. Python runs the merge loop, incrementally updating the token list.
+//   1. Rust reads the file, pre-tokenizes, and counts word frequencies (parallel).
+//   2. Rust returns a HashMap<Vec<u8>, u32> mapping each pre-token's bytes to its count.
+//   3. Python builds pair_counts and pair_to_words from word_counts, then runs the merge loop.
 //
 // Pre-tokenization has TWO levels:
 //   Level 1: Split file into chunks at <|endoftext|> boundaries
@@ -25,23 +25,15 @@
 // 1. Import pyo3 and set up the Python bindings
 // 2. Define the function signature:
 //    - Input:  file_path (str), special_tokens (list[str])
-//    - Output: (token_ids, pair_counts, encoded_special_tokens)
-//      - token_ids: flat list of ints — the full pre-tokenized corpus as byte IDs
-//      - pair_counts: dict {(int, int): int} — initial adjacent pair frequencies
-//      - encoded_special_tokens: list of bytes — special tokens encoded for Python
-// 3. Read the file from disk directly (memory-mapped for large files)
+//    - Output: word_counts (dict[bytes, int])
+// 3. Read the file from disk
 // 4. Split the file into chunks at <|endoftext|> token boundaries
 //    (for parallel processing across CPU cores)
 // 5. Within each chunk, apply the GPT-2 PAT regex to get pre-tokens
 //    Each pre-token is a "word" — a sequence of bytes
-// 6. Convert each byte into its ID (0-255) to build the token_ids list
-// 7. Count adjacent byte pairs across all pre-tokens:
-//    - Slide a window of size 2 over token_ids and count (id_a, id_b) occurrences
-//    - Pairs do NOT cross pre-token boundaries
-// 8. Return to Python:
-//    - token_ids: list[int] — the full corpus as a flat list of token IDs
-//    - pair_counts: dict {(int, int): int} — initial pair frequencies
-//    - encoded_special_tokens: list of encoded special tokens
+// 6. Count word frequencies in parallel using fold/reduce
+// 7. Return to Python:
+//    - word_counts: dict[bytes, int] — mapping each pre-token's bytes to its count
 
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -91,74 +83,38 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
     }
     println!("  [Rust 3/6] Special token split: {:.1}s ({} segments)", t_split.elapsed().as_secs_f64(), segments.len());
 
-    let mut token_ids: Vec<usize> = Vec::new();
-    let mut boundary: Vec<bool> = Vec::new();
-
-    let t_tokenize = Instant::now();
-    for seg in segments{
-        let idx = special_tokens.iter().position(|s| s == seg);
-
-        if idx.is_some() {
-            token_ids.push(256 + idx.unwrap()); // Special token IDs start after byte tokens (0-255)
-            boundary.push(true);
-        } else {
-            let mut seg_pre_tokens: Vec<&str> = pat.find_iter(seg).filter_map(|m| m.ok()).map(|m| m.as_str()).collect();
-            for pre_token in seg_pre_tokens {
-                let bytes = pre_token.as_bytes();
-                for (j, byte) in bytes.iter().enumerate() {
-                    token_ids.push(*byte as usize);
-                    boundary.push(j == bytes.len() - 1);
-                }
+    // Parallel word counting: each segment produces a local HashMap<Vec<u8>, u32>,
+    // then all local maps are merged by summing values.
+    let t_words = Instant::now();
+    let word_counts: HashMap<Vec<u8>, u32> = segments.par_iter().fold(
+        || HashMap::new(),
+        |mut local_counts, seg| {
+            // Skip special tokens — they are not pre-tokenized by the regex
+            let is_special = special_tokens.iter().any(|s| s == *seg);
+            if is_special {
+                return local_counts;
             }
+            for m in pat.find_iter(seg).filter_map(|m| m.ok()) {
+                let word_bytes = m.as_str().as_bytes().to_vec();
+                *local_counts.entry(word_bytes).or_insert(0) += 1;
+            }
+            local_counts
         }
-    }
-    println!("  [Rust 4/6] Tokenization: {:.1}s ({} token_ids)", t_tokenize.elapsed().as_secs_f64(), token_ids.len());
-
-    let t_pairs = Instant::now();
-    let mut pair_counts: HashMap<(usize, usize), usize> = (0..token_ids.len().saturating_sub(1)).into_par_iter().fold(
-        || HashMap::new(), // Initial empty pair count for each thread
-        |mut pair_counts, token_idx| {
-            if boundary[token_idx] { // Don't count pairs that cross pre-token boundaries
-                return pair_counts;
+    ).reduce(
+        || HashMap::new(),
+        |mut a, b| {
+            for (word, count) in b {
+                *a.entry(word).or_insert(0) += count;
             }
-            let pair = (token_ids[token_idx], token_ids[token_idx + 1]);
-            if (pair.0 >= 256 && pair.0 < 256 + special_tokens.len()) || 
-            (pair.1 >= 256 && pair.1 < 256 + special_tokens.len()) {
-                return pair_counts; // Skip pairs involving special tokens
-            }
-            *pair_counts.entry(pair).or_insert(0) += 1;
-            pair_counts
-        }).reduce(
-            || HashMap::new(),
-            |mut a, b| {
-                for (pair, count) in b {
-                    *a.entry(pair).or_insert(0) += count;
-                }
-                a
-            }
-        );
-    println!("  [Rust 5/6] Pair counting: {:.1}s ({} unique pairs)", t_pairs.elapsed().as_secs_f64(), pair_counts.len());
-    
+            a
+        }
+    );
+    println!("  [Rust 4/4] Word counting (parallel): {:.1}s ({} unique words)", t_words.elapsed().as_secs_f64(), word_counts.len());
 
-    // for i in 0..token_ids.len().saturating_sub(1) {
-    //     if boundary[i] { // Don't count pairs that cross pre-token boundaries
-    //         continue;
-    //     }
-    //     let pair = (token_ids[i], token_ids[i + 1]);
-    //     if (pair.0 >= 256 && pair.0 < 256 + special_tokens.len()) || 
-    //     (pair.1 >= 256 && pair.1 < 256 + special_tokens.len()) {
-    //         continue;
-    //     }
-    //     *pair_counts.entry(pair).or_insert(0) += 1;
-    // }
-
-
-    let encoded_special: Vec<Vec<u8>> = special_tokens.iter().map(|t| t.as_bytes().to_vec()).collect();
-
-    println!("  [Rust 6/6] Total Rust time: {:.1}s", t_total.elapsed().as_secs_f64());
+    println!("  [Rust] Total Rust time: {:.1}s", t_total.elapsed().as_secs_f64());
     
     Python::with_gil(|py| {
-        Ok((token_ids, pair_counts, encoded_special, boundary).into_pyobject(py)?.into())
+        Ok(word_counts.into_pyobject(py)?.into())
     })
 }
 

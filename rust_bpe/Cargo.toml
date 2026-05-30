@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.24", features = ["extension-module"] }
 fancy-regex = "0.15"
 rayon = "1.12.0"
+memmap2 = "0.9"

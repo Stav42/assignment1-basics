@@ -41,21 +41,31 @@ use std::fs;
 use std::time::Instant;
 use rayon::prelude::*;
 use fancy_regex::Regex;
+use std::fs::File;
+use memmap2::Mmap;
+
 
 #[pyfunction]
 fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyObject> {
     let t_total = Instant::now();
     
     let t_read = Instant::now();
-    let text = fs::read_to_string(&file_path)?;
-    println!("  [Rust 1/6] File read: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
+
+    let t_read = Instant::now();
+    let file = File::open(&file_path)?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let text: &str = unsafe { std::str::from_utf8_unchecked(&mmap) };
+    println!("  [Rust 1/6] File mmapped: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
+
+    // let text = fs::read_to_string(&file_path)?;
+    // println!("  [Rust 1/6] File read: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
     
     let t_regex = Instant::now();
     let pat = Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+").unwrap();
     println!("  [Rust 2/6] Regex compiled: {:.3}s", t_regex.elapsed().as_secs_f64());
     // let pre_tokens: Vec<&str> = pat.find_iter(&text).map(|m| m.as_str()).collect();
 
-    let mut segments: Vec<&str> = vec![&text];
+    let mut segments: Vec<&str> = vec![text];
 
     let t_split = Instant::now();
     for special_token in &special_tokens {

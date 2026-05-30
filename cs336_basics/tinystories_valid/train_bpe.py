@@ -305,8 +305,26 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
             del word_counts[word]
             word_counts[new_word] = count
 
-        if DEBUG: print(f"[DEBUG] Applying merge to all occurrences of {best_pair} ...", flush=True)
 
+
+
+
+
+        if DEBUG: print(f"[DEBUG] Applying merge to all occurrences of {best_pair} ...", flush=True)
+        # occurrences = pair_locations.pop(best_pair, [])
+        # del pair_counts[best_pair]
+
+        # last_merged_pos = None
+        # for i in sorted(occurrences):
+        #     if last_merged_pos is not None and i < last_merged_pos + 2:
+        #         continue
+        #     last_merged_pos = i
+        #     _apply_merge_at(
+        #         i, new_id, best_pair,
+        #         token_ids, boundary,
+        #         pair_counts, pair_locations,
+        #         num_special,
+        #     )
         t_apply = time.perf_counter() - t0
         t_iter = time.perf_counter() - t_iter_start
         merge_count += 1
@@ -349,7 +367,7 @@ if __name__ == "__main__":
     tracemalloc.start()
     print("Training BPE tokenizer...")
     t0 = time.perf_counter()
-    vocab_dict, merges_bytes = train_bpe('/Users/stav.42/courses/assignment1-basics/TinyStories-train.txt', 10000, ["<|endoftext|>"])
+    vocab_dict, merges_bytes = train_bpe('/Users/stav.42/courses/assignment1-basics/TinyStories-valid.txt', 10000, ["<|endoftext|>"])
     print(f"Total training time: {time.perf_counter() - t0:.3f}s")
     # Track max memory usage
     current, peak = tracemalloc.get_traced_memory()

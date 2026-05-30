@@ -141,6 +141,12 @@
       "accessCount": 1,
       "lastAccessed": 1780063721971,
       "type": "file"
+    },
+    {
+      "path": "bpe_rewrite_plan.md",
+      "accessCount": 1,
+      "lastAccessed": 1780067803129,
+      "type": "file"
     }
   ],
   "userDirectives": []

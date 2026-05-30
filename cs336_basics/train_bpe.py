@@ -77,7 +77,7 @@ def _build_pair_locations(token_ids: list, special_tokens: list, boundary: list)
         if _is_special(token_ids[i], num_special) or _is_special(token_ids[i + 1], num_special):
             continue
         pair = (token_ids[i], token_ids[i + 1])
-        pair_locations.setdefault(pair, []).append(i)
+        pair_locations.setdefault(pair, set([])).add(i)
     return pair_locations
 
 
@@ -142,7 +142,7 @@ def _apply_merge_at(
 
         new_left_pair = (left_val, new_id)
         pair_counts[new_left_pair] = pair_counts.get(new_left_pair, 0) + 1
-        pair_locations.setdefault(new_left_pair, []).append(left_pos)
+        pair_locations.setdefault(new_left_pair, set([])).add(left_pos)
 
     # --- Update right-side pairs ---
     if right_val is not None and not _is_special(right_val, num_special) and not boundary[i]:
@@ -157,7 +157,7 @@ def _apply_merge_at(
 
         new_right_pair = (new_id, right_val)
         pair_counts[new_right_pair] = pair_counts.get(new_right_pair, 0) + 1
-        pair_locations.setdefault(new_right_pair, []).append(i)
+        pair_locations.setdefault(new_right_pair, set([])).add(i)
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     tracemalloc.start()
     print("Training BPE tokenizer...")
     t0 = time.perf_counter()
-    vocab_dict, merges_bytes = train_bpe('/Users/stav.42/courses/assignment1-basics/TinyStories-valid.txt', 10000, ["<|endoftext|>"])
+    vocab_dict, merges_bytes = train_bpe('/Users/stav.42/courses/assignment1-basics/TinyStories-train.txt', 10000, ["<|endoftext|>"])
     print(f"Total training time: {time.perf_counter() - t0:.3f}s")
     # Track max memory usage
     current, peak = tracemalloc.get_traced_memory()

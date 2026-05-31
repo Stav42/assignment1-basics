@@ -39,10 +39,23 @@ use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::time::Instant;
+use std::sync::OnceLock;
 use rayon::prelude::*;
 use fancy_regex::Regex;
 use std::fs::File;
 use memmap2::Mmap;
+
+// GPT-2 pre-tokenization PAT. Compiled once on first use and reused across all
+// calls — fancy_regex compilation is expensive, so recompiling per call was a
+// major hot-path cost in the per-document encode path.
+static PAT: OnceLock<Regex> = OnceLock::new();
+
+fn get_pat() -> &'static Regex {
+    PAT.get_or_init(|| {
+        Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+")
+            .unwrap()
+    })
+}
 
 
 #[pyfunction]
@@ -130,69 +143,47 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
 
 #[pyfunction]
 fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<PyObject> {
-    let t_total = Instant::now();
-    
-    let t_read = Instant::now();
-
-    let t_words = Instant::now();
-
+    // Single-document path (called once per encode()). Use the compile-once
+    // shared regex and run sequentially — a single document is typically one
+    // segment, so rayon's per-call dispatch was pure overhead here.
     let text: &str = &text;
-    // println!("  [Rust 1/6] File mmapped: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
+    let pat = get_pat();
 
-    // let text = fs::read_to_string(&file_path)?;
-    // println!("  [Rust 1/6] File read: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
-    
-    let t_regex = Instant::now();
-    let pat = Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+").unwrap();
-    // println!("  [Rust 2/6] Regex compiled: {:.3}s", t_regex.elapsed().as_secs_f64());
-    // let pre_tokens: Vec<&str> = pat.find_iter(&text).map(|m| m.as_str()).collect();
-
+    // Split on special tokens (sequential).
     let mut segments: Vec<&str> = vec![text];
-
-    let t_split = Instant::now();
     for special_token in &special_tokens {
-        let new_segments = segments.into_par_iter().map( |segment| {
+        let mut new_segments: Vec<&str> = Vec::new();
+        for segment in segments {
             if special_tokens.iter().any(|s| s == segment) {
-                return vec![segment];
-            } else
-            {
-                let parts: Vec<&str> = segment.split(special_token).collect();
-                let mut result = Vec::new();
+                new_segments.push(segment);
+            } else {
+                let parts: Vec<&str> = segment.split(special_token.as_str()).collect();
                 for (i, part) in parts.iter().enumerate() {
                     if i > 0 {
-                        result.push(special_token.as_str());
+                        new_segments.push(special_token.as_str());
                     }
                     if !part.is_empty() {
-                        result.push(*part);
+                        new_segments.push(*part);
                     }
                 }
-                return result;
             }
-        } 
-        ).flatten().collect();
-
+        }
         segments = new_segments;
     }
-    // println!("  [Rust 3/4] Special token split: {:.1}s ({} segments)", t_split.elapsed().as_secs_f64(), segments.len());
 
-    // Process each segment sequentially to get pre-tokens, then add them all in a single list with <|endoftext|> separator. This ensures the final pre-token list is in the correct order.
-    // Make a boundary array which has the same length as the final pre-token list, with True at positions where the pre-token is a special token and where the pre-token ends.
-
-    let pre_token_list: Vec<Vec<u8>> = segments.par_iter().flat_map(|seg| {
-
-        // seg is a &str. Reference to a string
-
+    // Apply the PAT regex within each segment, preserving order.
+    let mut pre_token_list: Vec<Vec<u8>> = Vec::new();
+    for seg in &segments {
         let is_special = special_tokens.iter().any(|s| s == *seg);
         if is_special {
-            vec![seg.as_bytes().to_vec()]
+            pre_token_list.push(seg.as_bytes().to_vec());
         } else {
-            // Use pat to get the list of tokens from the segment
-            // find_iter returns Result<Match, Error>.
-            pat.find_iter(*seg).filter_map(|m| m.ok()).map(|m| m.as_str().as_bytes().to_vec()).collect::<Vec<Vec<u8>>>()
+            for m in pat.find_iter(seg).filter_map(|m| m.ok()) {
+                pre_token_list.push(m.as_str().as_bytes().to_vec());
+            }
         }
-    }).collect();
+    }
 
-    // println!("  [Rust 4/4] Pre-tokenization list completed (segments processed in parallel, tokens within each segment processed sequentially): {:.1}s ({} pre-tokens)", t_words.elapsed().as_secs_f64(), pre_token_list.len());
     Python::with_gil(|py| {
         Ok(pre_token_list.into_pyobject(py)?.into())
     })

@@ -125,6 +125,12 @@
       "accessCount": 1,
       "lastAccessed": 1780226510610,
       "type": "file"
+    },
+    {
+      "path": "cs336_basics/exp_1.py",
+      "accessCount": 1,
+      "lastAccessed": 1780238319208,
+      "type": "file"
     }
   ],
   "userDirectives": []

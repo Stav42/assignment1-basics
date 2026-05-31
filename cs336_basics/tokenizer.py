@@ -28,6 +28,13 @@ class Tokenizer:
         # pretoken bytes -> list[int]; pretokens repeat heavily in real text.
         self._cache: dict[bytes, list[int]] = {}
 
+        # Native Rust tokenizer: runs the whole encode (pre-tokenize + merges)
+        # in compiled code and returns token IDs directly. Special tokens are
+        # passed as str (Rust splits on them during pre-tokenization).
+        special_str = [s.decode("utf-8") if isinstance(s, bytes) else s
+                       for s in self.special_tokens]
+        self._rust = rust_bpe.RustTokenizer(self.vocab, self.merges, special_str)
+
         
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -55,13 +62,8 @@ class Tokenizer:
 
 
 
-        ids: list[int] = []
-        for pre_token in rust_bpe.pre_tokenize_string(text, self.special_sorted):
-            if pre_token in self._special_set:
-                ids.append(self.byte_to_id[pre_token])
-            else:
-                ids.extend(self._encode_pretoken(pre_token))
-        return ids
+        # Full encode runs natively in Rust (pre-tokenize + merges + IDs).
+        return self._rust.encode(text)
 
     def _encode_pretoken(self, pre_token: bytes) -> list[int]:
         cached = self._cache.get(pre_token)

@@ -110,14 +110,14 @@
   "hotPaths": [
     {
       "path": "cs336_basics/tokenizer.py",
-      "accessCount": 10,
-      "lastAccessed": 1780241451616,
+      "accessCount": 12,
+      "lastAccessed": 1780243395413,
       "type": "file"
     },
     {
       "path": "rust_bpe/src/lib.rs",
-      "accessCount": 5,
-      "lastAccessed": 1780242529198,
+      "accessCount": 11,
+      "lastAccessed": 1780243382040,
       "type": "file"
     },
     {

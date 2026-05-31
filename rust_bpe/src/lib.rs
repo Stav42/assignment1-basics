@@ -141,17 +141,16 @@ fn pre_tokenize(file_path: String, special_tokens: Vec<String>) -> PyResult<PyOb
     })
 }
 
-#[pyfunction]
-fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<PyObject> {
-    // Single-document path (called once per encode()). Use the compile-once
-    // shared regex and run sequentially — a single document is typically one
-    // segment, so rayon's per-call dispatch was pure overhead here.
-    let text: &str = &text;
+/// Shared pre-tokenizer (sequential, compile-once regex). Splits on the given
+/// special tokens (caller passes them longest-first to handle overlaps), then
+/// applies the GPT-2 PAT regex within each non-special segment. Returns the
+/// ordered list of pre-token byte sequences, with special tokens kept intact.
+fn pretokenize_to_bytes(text: &str, special_tokens: &[String]) -> Vec<Vec<u8>> {
     let pat = get_pat();
 
     // Split on special tokens (sequential).
     let mut segments: Vec<&str> = vec![text];
-    for special_token in &special_tokens {
+    for special_token in special_tokens {
         let mut new_segments: Vec<&str> = Vec::new();
         for segment in segments {
             if special_tokens.iter().any(|s| s == segment) {
@@ -174,8 +173,7 @@ fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<Py
     // Apply the PAT regex within each segment, preserving order.
     let mut pre_token_list: Vec<Vec<u8>> = Vec::new();
     for seg in &segments {
-        let is_special = special_tokens.iter().any(|s| s == *seg);
-        if is_special {
+        if special_tokens.iter().any(|s| s == *seg) {
             pre_token_list.push(seg.as_bytes().to_vec());
         } else {
             for m in pat.find_iter(seg).filter_map(|m| m.ok()) {
@@ -184,9 +182,170 @@ fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<Py
         }
     }
 
+    pre_token_list
+}
+
+#[pyfunction]
+fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<PyObject> {
+    let pre_token_list = pretokenize_to_bytes(&text, &special_tokens);
     Python::with_gil(|py| {
         Ok(pre_token_list.into_pyobject(py)?.into())
     })
+}
+
+// --- RustTokenizer: full encode() in Rust ---
+//
+// Holds the vocab + merge ranks and runs the entire encode pipeline natively:
+//   text -> pre-tokenize -> apply merges -> Vec<u32> token IDs.
+// This avoids creating thousands of Python `bytes` objects per document and
+// runs the merge loop in compiled code instead of the Python interpreter.
+//
+// Tokens are represented as u32 IDs throughout the merge loop (not byte
+// vectors), so merging is just integer comparison + hashmap lookups — no
+// per-step allocation of byte sequences.
+#[pyclass]
+struct RustTokenizer {
+    // (left_id, right_id) -> (merge rank, merged token id)
+    merges_map: HashMap<(u32, u32), (u32, u32)>,
+    // initial token id for each raw byte value (0..256)
+    byte_id: Vec<u32>,
+    // special-token bytes -> its token id
+    special_to_id: HashMap<Vec<u8>, u32>,
+    // special tokens as strings, longest-first (for pre-tokenization splitting)
+    special_sorted: Vec<String>,
+    // pre-token bytes -> cached token ids (pre-tokens repeat heavily in real text)
+    cache: HashMap<Vec<u8>, Vec<u32>>,
+}
+
+impl RustTokenizer {
+    /// Merge a single (non-special) pre-token into its token IDs.
+    fn merge_one(&self, pre_token: &[u8]) -> Vec<u32> {
+        let mut parts: Vec<u32> = pre_token.iter().map(|&b| self.byte_id[b as usize]).collect();
+
+        while parts.len() > 1 {
+            // Find the lowest-rank adjacent pair in a single pass.
+            let mut best_rank = u32::MAX;
+            let mut best_i = usize::MAX;
+            let mut best_merged = 0u32;
+            for i in 0..parts.len() - 1 {
+                if let Some(&(rank, merged_id)) = self.merges_map.get(&(parts[i], parts[i + 1])) {
+                    if rank < best_rank {
+                        best_rank = rank;
+                        best_i = i;
+                        best_merged = merged_id;
+                    }
+                }
+            }
+            if best_i == usize::MAX {
+                break;
+            }
+
+            let (a, b) = (parts[best_i], parts[best_i + 1]);
+            let mut new_parts: Vec<u32> = Vec::with_capacity(parts.len());
+            let mut i = 0;
+            while i < parts.len() {
+                if i + 1 < parts.len() && parts[i] == a && parts[i + 1] == b {
+                    new_parts.push(best_merged);
+                    i += 2;
+                } else {
+                    new_parts.push(parts[i]);
+                    i += 1;
+                }
+            }
+            parts = new_parts;
+        }
+
+        parts
+    }
+}
+
+#[pymethods]
+impl RustTokenizer {
+    /// Build from the Python tokenizer state.
+    ///   vocab:          dict[int, bytes]      (must include special tokens)
+    ///   merges:         list[(bytes, bytes)]  (in merge-priority order)
+    ///   special_tokens: list[str]
+    #[new]
+    fn new(
+        vocab: HashMap<u32, Vec<u8>>,
+        merges: Vec<(Vec<u8>, Vec<u8>)>,
+        special_tokens: Vec<String>,
+    ) -> PyResult<Self> {
+        // bytes -> id, for looking up merge children/results and single bytes.
+        let mut byte_to_id: HashMap<Vec<u8>, u32> = HashMap::with_capacity(vocab.len());
+        for (id, bytes) in &vocab {
+            byte_to_id.insert(bytes.clone(), *id);
+        }
+
+        // Single-byte starting ids (BPE vocab always contains all 256 bytes).
+        let mut byte_id: Vec<u32> = vec![0; 256];
+        for b in 0..256u32 {
+            let id = *byte_to_id
+                .get(&vec![b as u8])
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
+                    format!("vocab missing single byte {}", b),
+                ))?;
+            byte_id[b as usize] = id;
+        }
+
+        // (left_id, right_id) -> (rank, merged_id)
+        let mut merges_map: HashMap<(u32, u32), (u32, u32)> = HashMap::with_capacity(merges.len());
+        for (rank, (left, right)) in merges.iter().enumerate() {
+            let left_id = *byte_to_id.get(left).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("merge left token not in vocab")
+            })?;
+            let right_id = *byte_to_id.get(right).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("merge right token not in vocab")
+            })?;
+            let mut merged = left.clone();
+            merged.extend_from_slice(right);
+            let merged_id = *byte_to_id.get(&merged).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("merged token not in vocab")
+            })?;
+            merges_map.insert((left_id, right_id), (rank as u32, merged_id));
+        }
+
+        // Special-token byte -> id, and the longest-first split order.
+        let mut special_to_id: HashMap<Vec<u8>, u32> = HashMap::new();
+        for s in &special_tokens {
+            let bytes = s.as_bytes().to_vec();
+            if let Some(&id) = byte_to_id.get(&bytes) {
+                special_to_id.insert(bytes, id);
+            }
+        }
+        let mut special_sorted = special_tokens.clone();
+        special_sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        Ok(RustTokenizer {
+            merges_map,
+            byte_id,
+            special_to_id,
+            special_sorted,
+            cache: HashMap::new(),
+        })
+    }
+
+    /// Encode text into token IDs.
+    fn encode(&mut self, text: String) -> Vec<u32> {
+        let pretokens = pretokenize_to_bytes(&text, &self.special_sorted);
+        let mut ids: Vec<u32> = Vec::with_capacity(pretokens.len());
+
+        for pt in pretokens {
+            if let Some(&sid) = self.special_to_id.get(&pt) {
+                ids.push(sid);
+                continue;
+            }
+            if let Some(cached) = self.cache.get(&pt) {
+                ids.extend_from_slice(cached);
+                continue;
+            }
+            let merged = self.merge_one(&pt);
+            ids.extend_from_slice(&merged);
+            self.cache.insert(pt, merged);
+        }
+
+        ids
+    }
 }
 
 // --- BpeTrainer: stateful BPE training class ---
@@ -475,6 +634,7 @@ impl BpeTrainer {
 fn rust_bpe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pre_tokenize, m)?)?;
     m.add_class::<BpeTrainer>()?;
+    m.add_class::<RustTokenizer>()?;
     m.add_function(wrap_pyfunction!(pre_tokenize_string, m)?)?;
     Ok(())
 }

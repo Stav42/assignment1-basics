@@ -110,8 +110,8 @@
   "hotPaths": [
     {
       "path": "rust_bpe/src/lib.rs",
-      "accessCount": 18,
-      "lastAccessed": 1780253893570,
+      "accessCount": 22,
+      "lastAccessed": 1780255085435,
       "type": "file"
     },
     {

@@ -259,17 +259,23 @@ impl RustTokenizer {
     }
 
     /// Encode one document (a text span plus its optional trailing special
-    /// token) into token IDs WITHOUT touching the shared cache. Pure and
-    /// read-only (`&self`), so it is safe to call concurrently from rayon
-    /// workers — this is the per-document unit of the parallel `encode_batch`.
-    fn encode_doc_nocache(&self, text: &str) -> Vec<u32> {
+    /// token) into token IDs, memoizing pre-token merges in the supplied
+    /// `cache`. The cache is owned by the calling rayon worker (one per thread,
+    /// created by `map_init`), so there is no shared mutable state and no lock
+    /// contention — `&self` stays read-only and the cache recovers the
+    /// memoization that the serial `encode` path gets, but per-worker.
+    fn encode_doc_cached(&self, text: &str, cache: &mut HashMap<Vec<u8>, Vec<u32>>) -> Vec<u32> {
         let pretokens = pretokenize_to_bytes(text, &self.special_sorted);
         let mut ids: Vec<u32> = Vec::with_capacity(pretokens.len());
         for pt in pretokens {
             if let Some(&sid) = self.special_to_id.get(&pt) {
                 ids.push(sid);
+            } else if let Some(cached) = cache.get(&pt) {
+                ids.extend_from_slice(cached);
             } else {
-                ids.extend_from_slice(&self.merge_one(&pt));
+                let merged = self.merge_one(&pt);
+                ids.extend_from_slice(&merged);
+                cache.insert(pt, merged);
             }
         }
         ids
@@ -375,9 +381,11 @@ impl RustTokenizer {
     /// and other Python threads are not blocked. Token IDs come back in
     /// document order — parallelism does not reorder output.
     ///
-    /// Unlike `encode`, this path does NOT use the pre-token cache: dropping the
-    /// shared `&mut self` cache is exactly what makes the work embarrassingly
-    /// parallel. Output is identical to calling `encode` on the same blob.
+    /// Memoization is preserved via a PER-WORKER cache: `map_init` hands each
+    /// rayon worker its own `HashMap` (no sharing, no locks), reused across all
+    /// the documents that worker processes. This recovers most of the
+    /// pre-token cache benefit that serial `encode` enjoys, while still running
+    /// across cores. Output is identical to calling `encode` on the same blob.
     fn encode_batch(&self, py: Python<'_>, text: String) -> Vec<u32> {
         // Per-document units; keep the special token attached to each unit's end.
         let documents: Vec<&str> = match self.special_sorted.first() {
@@ -391,7 +399,11 @@ impl RustTokenizer {
         py.allow_threads(|| {
             documents
                 .into_par_iter()
-                .flat_map_iter(|doc| self.encode_doc_nocache(doc))
+                .map_init(
+                    HashMap::<Vec<u8>, Vec<u32>>::new, // one cache per worker thread
+                    |cache, doc| self.encode_doc_cached(doc, cache),
+                )
+                .flatten_iter()
                 .collect()
         })
     }

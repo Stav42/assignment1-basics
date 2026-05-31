@@ -257,6 +257,23 @@ impl RustTokenizer {
 
         parts
     }
+
+    /// Encode one document (a text span plus its optional trailing special
+    /// token) into token IDs WITHOUT touching the shared cache. Pure and
+    /// read-only (`&self`), so it is safe to call concurrently from rayon
+    /// workers — this is the per-document unit of the parallel `encode_batch`.
+    fn encode_doc_nocache(&self, text: &str) -> Vec<u32> {
+        let pretokens = pretokenize_to_bytes(text, &self.special_sorted);
+        let mut ids: Vec<u32> = Vec::with_capacity(pretokens.len());
+        for pt in pretokens {
+            if let Some(&sid) = self.special_to_id.get(&pt) {
+                ids.push(sid);
+            } else {
+                ids.extend_from_slice(&self.merge_one(&pt));
+            }
+        }
+        ids
+    }
 }
 
 #[pymethods]
@@ -345,6 +362,38 @@ impl RustTokenizer {
         }
 
         ids
+    }
+
+    /// Encode a large blob containing many documents, in parallel across cores.
+    ///
+    /// The blob is split into per-document units at the primary special token
+    /// (e.g. `<|endoftext|>`) via `split_inclusive`, so concatenating the units
+    /// reproduces the original blob exactly. Each unit is pre-tokenized (GPT-2
+    /// regex) and BPE-merged on a rayon worker; documents are independent in
+    /// BPE, so there is no shared state to contend on. The GIL is released for
+    /// the duration (`allow_threads`) so the rayon pool runs truly in parallel
+    /// and other Python threads are not blocked. Token IDs come back in
+    /// document order — parallelism does not reorder output.
+    ///
+    /// Unlike `encode`, this path does NOT use the pre-token cache: dropping the
+    /// shared `&mut self` cache is exactly what makes the work embarrassingly
+    /// parallel. Output is identical to calling `encode` on the same blob.
+    fn encode_batch(&self, py: Python<'_>, text: String) -> Vec<u32> {
+        // Per-document units; keep the special token attached to each unit's end.
+        let documents: Vec<&str> = match self.special_sorted.first() {
+            Some(delim) if !delim.is_empty() => {
+                text.split_inclusive(delim.as_str()).collect()
+            }
+            // No special tokens configured: the whole blob is one unit.
+            _ => vec![text.as_str()],
+        };
+
+        py.allow_threads(|| {
+            documents
+                .into_par_iter()
+                .flat_map_iter(|doc| self.encode_doc_nocache(doc))
+                .collect()
+        })
     }
 }
 

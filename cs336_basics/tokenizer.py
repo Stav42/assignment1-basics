@@ -103,9 +103,19 @@ class Tokenizer:
     
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        for text in iterable:
-            for token_id in self.encode(text):
-                yield token_id
+        # The iterable is expected to yield large blobs, each ending on a
+        # <|endoftext|> boundary. If the Rust extension exposes the parallel
+        # batch path, hand each blob to it whole — Rust splits it into documents
+        # and encodes them across cores. Otherwise fall back to serial encode.
+        batch = getattr(self._rust, "encode_batch", None)
+        if batch is not None:
+            for blob in iterable:
+                if not blob:
+                    continue
+                yield from batch(blob)
+        else:
+            for blob in iterable:
+                yield from self._rust.encode(blob)
     
     # def decode(self, ids: list[int]) -> str:
 

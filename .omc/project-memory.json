@@ -109,21 +109,21 @@
   },
   "hotPaths": [
     {
-      "path": "cs336_basics/tokenizer.py",
-      "accessCount": 12,
-      "lastAccessed": 1780243395413,
+      "path": "rust_bpe/src/lib.rs",
+      "accessCount": 18,
+      "lastAccessed": 1780253893570,
       "type": "file"
     },
     {
-      "path": "rust_bpe/src/lib.rs",
-      "accessCount": 11,
-      "lastAccessed": 1780243382040,
+      "path": "cs336_basics/tokenizer.py",
+      "accessCount": 15,
+      "lastAccessed": 1780253812619,
       "type": "file"
     },
     {
       "path": "cs336_basics/exp_1.py",
-      "accessCount": 3,
-      "lastAccessed": 1780241374173,
+      "accessCount": 7,
+      "lastAccessed": 1780254701968,
       "type": "file"
     },
     {

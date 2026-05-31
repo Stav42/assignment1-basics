@@ -2,9 +2,9 @@ import pickle
 from collections import Counter
 
 def load_data():
-    with open('cs336_basics/tinystories_train/vocab_dict.pkl', 'rb') as f:
+    with open('cs336_basics/owt_train/vocab_dict.pkl', 'rb') as f:
         vocab_dict = pickle.load(f)
-    with open('cs336_basics/tinystories_train/merges_bytes.pkl', 'rb') as f:
+    with open('cs336_basics/owt_train/merges_bytes.pkl', 'rb') as f:
         merges_bytes = pickle.load(f)
     return vocab_dict, merges_bytes
 

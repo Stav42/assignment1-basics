@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1779955065568,
+  "lastScanned": 1780218022812,
   "projectRoot": "/Users/stav.42/courses/assignment1-basics",
   "techStack": {
     "languages": [
@@ -52,11 +52,13 @@
     "cs336_basics": {
       "path": "cs336_basics",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1779955065530,
+      "fileCount": 7,
+      "lastAccessed": 1780218022763,
       "keyFiles": [
         "__init__.py",
+        "merges_bytes.pkl",
         "pretokenization_example.py",
+        "tokenizer.py",
         "train_bpe.py"
       ]
     },
@@ -64,7 +66,7 @@
       "path": "rust_bpe",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1779955065532,
+      "lastAccessed": 1780218022764,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml"
@@ -74,7 +76,7 @@
       "path": "tests",
       "purpose": "Test files",
       "fileCount": 12,
-      "lastAccessed": 1779955065532,
+      "lastAccessed": 1780218022765,
       "keyFiles": [
         "__init__.py",
         "adapters.py",
@@ -87,7 +89,7 @@
       "path": "rust_bpe/src",
       "purpose": "Source code",
       "fileCount": 2,
-      "lastAccessed": 1779955065534,
+      "lastAccessed": 1780218022769,
       "keyFiles": [
         "lib.rs",
         "main.rs"
@@ -96,8 +98,8 @@
     "tests/fixtures": {
       "path": "tests/fixtures",
       "purpose": "Test fixtures",
-      "fileCount": 11,
-      "lastAccessed": 1779955065535,
+      "fileCount": 12,
+      "lastAccessed": 1780218022779,
       "keyFiles": [
         "address.txt",
         "corpus.en",
@@ -107,45 +109,21 @@
   },
   "hotPaths": [
     {
+      "path": "cs336_basics/tokenizer.py",
+      "accessCount": 7,
+      "lastAccessed": 1780236456963,
+      "type": "file"
+    },
+    {
       "path": "rust_bpe/src/lib.rs",
-      "accessCount": 5,
-      "lastAccessed": 1780180713070,
+      "accessCount": 2,
+      "lastAccessed": 1780235122643,
       "type": "file"
     },
     {
       "path": "cs336_basics/train_bpe.py",
-      "accessCount": 4,
-      "lastAccessed": 1780180712520,
-      "type": "file"
-    },
-    {
-      "path": "tests/fixtures/tiny_debug.txt",
       "accessCount": 1,
-      "lastAccessed": 1779955527533,
-      "type": "file"
-    },
-    {
-      "path": "cs336_basics/train_bpe_optimal_fail.py",
-      "accessCount": 1,
-      "lastAccessed": 1780040322261,
-      "type": "file"
-    },
-    {
-      "path": "cs336_assignment1_basics.pdf",
-      "accessCount": 1,
-      "lastAccessed": 1780063566085,
-      "type": "file"
-    },
-    {
-      "path": "assignment1_pages_1-12.md",
-      "accessCount": 1,
-      "lastAccessed": 1780063721971,
-      "type": "file"
-    },
-    {
-      "path": "bpe_rewrite_plan.md",
-      "accessCount": 1,
-      "lastAccessed": 1780067803129,
+      "lastAccessed": 1780226510610,
       "type": "file"
     }
   ],

@@ -22,6 +22,12 @@ class Tokenizer:
         self.merge_rank = {pair: i for i, pair in enumerate(self.merges)}
         self.byte_to_id = {token: token_id for token_id, token in self.vocab.items()}
 
+        # Precompute once instead of on every encode() call.
+        self._special_set = {s.encode("utf-8") if isinstance(s, str) else s
+                             for s in self.special_tokens}
+        # pretoken bytes -> list[int]; pretokens repeat heavily in real text.
+        self._cache: dict[bytes, list[int]] = {}
+
         
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -49,37 +55,49 @@ class Tokenizer:
 
 
 
-        pre_token_list: list[bytes] = rust_bpe.pre_tokenize_string(text, self.special_sorted)
         ids: list[int] = []
-        special_set = {s.encode("utf-8") if isinstance(s, str) else s
-                         for s in self.special_tokens}
-
-        for pre_token in pre_token_list:
-            if pre_token in special_set:
+        for pre_token in rust_bpe.pre_tokenize_string(text, self.special_sorted):
+            if pre_token in self._special_set:
                 ids.append(self.byte_to_id[pre_token])
-                continue
-            parts = [pre_token[i:i+1] for i in range(len(pre_token))]
-            
-
-            while len(parts) > 1:
-                pairs = [(parts[i], parts[i+1]) for i in range(len(parts)-1)]
-                best = min(pairs, key = lambda pair: self.merge_rank.get(pair, float('inf')))
-                if best not in self.merge_rank:
-                    break
-
-                new_parts, i = [], 0
-                while i < len(parts):
-                    if i+1<len(parts) and (parts[i], parts[i+1]) == best:
-                        new_parts.append(parts[i] + parts[i+1])
-                        i += 2
-                    else:
-                        new_parts.append(parts[i])
-                        i += 1
-                parts = new_parts
-                
-            ids.extend(self.byte_to_id[chunk] for chunk in parts)
-
+            else:
+                ids.extend(self._encode_pretoken(pre_token))
         return ids
+
+    def _encode_pretoken(self, pre_token: bytes) -> list[int]:
+        cached = self._cache.get(pre_token)
+        if cached is not None:
+            return cached
+
+        merge_rank = self.merge_rank
+        parts = [pre_token[i:i+1] for i in range(len(pre_token))]
+
+        while len(parts) > 1:
+            # Single pass to find the lowest-rank adjacent pair (no list/lambda alloc).
+            best_rank = len(merge_rank)  # any real rank is < len(merge_rank)
+            best_i = -1
+            for i in range(len(parts) - 1):
+                r = merge_rank.get((parts[i], parts[i + 1]))
+                if r is not None and r < best_rank:
+                    best_rank = r
+                    best_i = i
+            if best_i == -1:
+                break
+
+            best = (parts[best_i], parts[best_i + 1])
+            new_parts, i = [], 0
+            while i < len(parts):
+                if i + 1 < len(parts) and (parts[i], parts[i + 1]) == best:
+                    new_parts.append(parts[i] + parts[i + 1])
+                    i += 2
+                else:
+                    new_parts.append(parts[i])
+                    i += 1
+            parts = new_parts
+
+        byte_to_id = self.byte_to_id
+        result = [byte_to_id[chunk] for chunk in parts]
+        self._cache[pre_token] = result
+        return result
     
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:

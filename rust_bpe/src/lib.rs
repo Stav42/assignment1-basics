@@ -137,14 +137,14 @@ fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<Py
     let t_words = Instant::now();
 
     let text: &str = &text;
-    println!("  [Rust 1/6] File mmapped: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
+    // println!("  [Rust 1/6] File mmapped: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
 
     // let text = fs::read_to_string(&file_path)?;
     // println!("  [Rust 1/6] File read: {:.1}s ({} bytes)", t_read.elapsed().as_secs_f64(), text.len());
     
     let t_regex = Instant::now();
     let pat = Regex::new(r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+").unwrap();
-    println!("  [Rust 2/6] Regex compiled: {:.3}s", t_regex.elapsed().as_secs_f64());
+    // println!("  [Rust 2/6] Regex compiled: {:.3}s", t_regex.elapsed().as_secs_f64());
     // let pre_tokens: Vec<&str> = pat.find_iter(&text).map(|m| m.as_str()).collect();
 
     let mut segments: Vec<&str> = vec![text];
@@ -173,7 +173,7 @@ fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<Py
 
         segments = new_segments;
     }
-    println!("  [Rust 3/4] Special token split: {:.1}s ({} segments)", t_split.elapsed().as_secs_f64(), segments.len());
+    // println!("  [Rust 3/4] Special token split: {:.1}s ({} segments)", t_split.elapsed().as_secs_f64(), segments.len());
 
     // Process each segment sequentially to get pre-tokens, then add them all in a single list with <|endoftext|> separator. This ensures the final pre-token list is in the correct order.
     // Make a boundary array which has the same length as the final pre-token list, with True at positions where the pre-token is a special token and where the pre-token ends.
@@ -192,7 +192,7 @@ fn pre_tokenize_string(text: String, special_tokens: Vec<String>) -> PyResult<Py
         }
     }).collect();
 
-    println!("  [Rust 4/4] Pre-tokenization list completed (segments processed in parallel, tokens within each segment processed sequentially): {:.1}s ({} pre-tokens)", t_words.elapsed().as_secs_f64(), pre_token_list.len());
+    // println!("  [Rust 4/4] Pre-tokenization list completed (segments processed in parallel, tokens within each segment processed sequentially): {:.1}s ({} pre-tokens)", t_words.elapsed().as_secs_f64(), pre_token_list.len());
     Python::with_gil(|py| {
         Ok(pre_token_list.into_pyobject(py)?.into())
     })

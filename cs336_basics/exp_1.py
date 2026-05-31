@@ -7,6 +7,37 @@ VOCAB_PATH_TINY = "/Users/stav.42/courses/assignment1-basics/cs336_basics/tinyst
 OWT_DATA_PATH = "/Users/stav.42/courses/assignment1-basics/TinyStories-train.txt"
 TINY_DATA_PATH = "/Users/stav.42/courses/assignment1-basics/TinyStories-train.txt"
 
+import numpy as np
+
+def file_chunk_generator(file_path, chunk_size=4096):
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        leftover = ""
+        while True:
+            text = ""
+            chunk = f.read(chunk_size)
+            if not chunk:  # end of file
+                yield leftover  # yield any remaining text as the last document
+                break
+            combined = leftover + chunk
+            text += combined
+            
+            ## See where the last occurrence of the target token is in the combined text
+            # If it exists, split the text at that point and yield the part before it as a document, and keep the part after it as leftover for the next chunk.
+            target = "<|endoftext|>"
+            last_occurrence = combined.rfind(target)
+            if last_occurrence != -1:
+                # Split the combined text at the last occurrence of the target token
+                text = combined[:last_occurrence + len(target)]
+                leftover = combined[last_occurrence + len(target):]
+                yield text
+            else:
+                
+                # If the target token is not found, keep the entire combined text as leftover for the next chunk
+                leftover = combined
+
+
+
 if __name__ == "__main__":
 
     vocab_choice = "Tiny"   # OWT || Tiny
@@ -155,3 +186,24 @@ if __name__ == "__main__":
     print(f"  Estimated time: {estimated_hours:.2f} hours")
     print(f"  Estimated time: {estimated_days:.2f} days")
     print(f"{'='*60}\n")
+
+    print("Time to encode the entire dataset and save token IDs to a .npy file...")
+    t0 = time.perf_counter()
+
+    generator = file_chunk_generator(data_path, chunk_size=4096)
+    encoding = tokenizer.encode_iterable(generator)
+
+    arr = np.fromiter(encoding, dtype=np.uint16)
+    print(f"Encoding completed in {time.perf_counter() - t0:.3f} seconds")
+    t1 = time.perf_counter()
+
+    arr_head = arr[:100]
+    print(f"First 100 token IDs: {arr_head}")
+    decoded_head = tokenizer.decode(arr_head.tolist())
+    print(f"Decoded first 100 token IDs: {decoded_head}")
+
+    np.save("token_ids.npy", arr)
+
+    print(f"Total time to save: {time.perf_counter() - t1:.3f} seconds")
+
+

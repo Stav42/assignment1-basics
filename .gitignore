@@ -167,3 +167,5 @@ TinyStories-train.txt
 TinyStories-valid.txt
 OpenWebText-train.txt
 OpenWebText-valid.txt
+
+*.npy

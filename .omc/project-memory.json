@@ -119,6 +119,12 @@
       "accessCount": 2,
       "lastAccessed": 1781168411232,
       "type": "file"
+    },
+    {
+      "path": "cs336_basics/asgn1_model/RMSNorm.py",
+      "accessCount": 2,
+      "lastAccessed": 1781175046684,
+      "type": "file"
     }
   ],
   "userDirectives": []

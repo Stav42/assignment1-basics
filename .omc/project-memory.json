@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1780218022812,
+  "lastScanned": 1781164181101,
   "projectRoot": "/Users/stav.42/courses/assignment1-basics",
   "techStack": {
     "languages": [
@@ -52,21 +52,21 @@
     "cs336_basics": {
       "path": "cs336_basics",
       "purpose": null,
-      "fileCount": 7,
-      "lastAccessed": 1780218022763,
+      "fileCount": 8,
+      "lastAccessed": 1781164181073,
       "keyFiles": [
         "__init__.py",
+        "exp_1.py",
         "merges_bytes.pkl",
         "pretokenization_example.py",
-        "tokenizer.py",
-        "train_bpe.py"
+        "tokenizer.py"
       ]
     },
     "rust_bpe": {
       "path": "rust_bpe",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1780218022764,
+      "lastAccessed": 1781164181074,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml"
@@ -76,7 +76,7 @@
       "path": "tests",
       "purpose": "Test files",
       "fileCount": 12,
-      "lastAccessed": 1780218022765,
+      "lastAccessed": 1781164181075,
       "keyFiles": [
         "__init__.py",
         "adapters.py",
@@ -89,7 +89,7 @@
       "path": "rust_bpe/src",
       "purpose": "Source code",
       "fileCount": 2,
-      "lastAccessed": 1780218022769,
+      "lastAccessed": 1781164181084,
       "keyFiles": [
         "lib.rs",
         "main.rs"
@@ -99,7 +99,7 @@
       "path": "tests/fixtures",
       "purpose": "Test fixtures",
       "fileCount": 12,
-      "lastAccessed": 1780218022779,
+      "lastAccessed": 1781164181085,
       "keyFiles": [
         "address.txt",
         "corpus.en",
@@ -109,27 +109,15 @@
   },
   "hotPaths": [
     {
-      "path": "rust_bpe/src/lib.rs",
-      "accessCount": 22,
-      "lastAccessed": 1780255085435,
+      "path": "cs336_basics/asgn1_model/Linear.py",
+      "accessCount": 3,
+      "lastAccessed": 1781166242091,
       "type": "file"
     },
     {
-      "path": "cs336_basics/tokenizer.py",
-      "accessCount": 15,
-      "lastAccessed": 1780253812619,
-      "type": "file"
-    },
-    {
-      "path": "cs336_basics/exp_1.py",
-      "accessCount": 7,
-      "lastAccessed": 1780254701968,
-      "type": "file"
-    },
-    {
-      "path": "cs336_basics/train_bpe.py",
-      "accessCount": 1,
-      "lastAccessed": 1780226510610,
+      "path": "cs336_basics/asgn1_model/Embedding.py",
+      "accessCount": 2,
+      "lastAccessed": 1781168411232,
       "type": "file"
     }
   ],

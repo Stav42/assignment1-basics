@@ -496,7 +496,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
     return softmax(in_features, dim)
 
 
-from cs336_basics.CE_loss import calculate_ce_loss
+from cs336_basics.asgn1_model.CE_loss import calculate_ce_loss
 
 def run_cross_entropy(
     inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]

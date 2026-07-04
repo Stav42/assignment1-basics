@@ -1,6 +1,6 @@
 import torch
 import cs336_basics.asgn1_model.TransformerLM as TransformerLM
-import softmax.softmax as softmax
+from cs336_basics.asgn1_model.softmax import softmax
 import cs336_basics.tokenizer as Tokenizer
 
 def decode(
@@ -8,7 +8,7 @@ def decode(
     x: torch.tensor,
     max_tokens: int,
     lambda_: float,
-    vocab: list[str],
+    vocab: dict[int, bytes],
     threshold: float | None = None,
     tokenizer: Tokenizer.Tokenizer | None = None,
 ) -> str:
@@ -17,11 +17,18 @@ def decode(
     token_len = 0
     model.eval()
 
+    # Resolve the <|endoftext|> id once so we can stop when the model emits it.
+    eos_bytes = b"<|endoftext|>"
+    eos_id = next((tid for tid, b in vocab.items() if b == eos_bytes), None)
+
     with torch.no_grad():
         x = x.to(model.device)
 
         while valid:
-            v = model(x)
+            # The model was trained with a fixed context window; RoPE and the
+            # causal mask are sized to context_length, so only the most recent
+            # context_length tokens can be fed back in as the sequence grows.
+            v = model(x[:, -model.context_length:])
             next_dist = v[:, -1, :]
 
             dist = softmax(next_dist/lambda_, dim=-1)
@@ -52,7 +59,7 @@ def decode(
             if token_len >= max_tokens:
                 valid = False
 
-            if vocab[next_token] == "<|endoftext|>":
+            if next_token == eos_id:
                 valid = False
         
 
